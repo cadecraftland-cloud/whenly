@@ -83,19 +83,41 @@ body {
   flex: 1;
 }
 input,
-select {
+select,
+textarea {
   font: inherit;
   font-weight: 400;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+textarea {
+  resize: vertical;
+}
+/* highlight fields on hover */
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08);
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid var(--primary);
   outline-offset: 0;
   border-color: var(--primary);
+}
+.optional {
+  font-weight: 400;
+  color: var(--muted);
+}
+.hint {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 /* --- Buttons ------------------------------------------------------------ */
@@ -128,6 +150,14 @@ select:focus {
   background: transparent;
   color: var(--primary);
   border-color: var(--border);
+}
+.btn-danger {
+  background: #fff;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.btn-danger:hover {
+  background: #fef2f2;
 }
 
 /* --- The availability grid --------------------------------------------- */
@@ -271,5 +301,38 @@ select:focus {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+}
+.best-box li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.locked-tag {
+  color: #15803d;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Final-time banner (when the organizer locks a time) */
+.final-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  margin-bottom: 16px;
+}
+
+/* Organizer-only controls */
+.organizer-controls {
+  margin-top: 16px;
+  border-color: #e3e7ef;
+  background: #fafbff;
+}
+.organizer-controls h3 {
+  margin-bottom: 2px;
 }

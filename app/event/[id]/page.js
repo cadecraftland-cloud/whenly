@@ -3,96 +3,106 @@
 // ---------------------------------------------------------------------------
 // /event/[id] — the shareable event page.
 //
-// "[id]" in the folder name is a URL placeholder: visiting /event/abc-123 makes
-// id = "abc-123". We use that id to load the event and everyone's responses
-// from Supabase. Whoever opens this link can add their availability and see the
-// combined results — updating live as other people respond.
+// "[id]" in the folder name is a URL placeholder. It's normally a friendly slug
+// like "movie-night-7x2k" (older events used a long UUID — we handle both).
+// Whoever opens this link can add their availability and see the combined
+// results, updating live. The event's creator additionally sees organizer
+// controls (lock a final time, close, delete).
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import AvailabilityGrid from "../../components/AvailabilityGrid";
-import { buildTimes, slotKey, formatSlot, isAllDay } from "../../lib/event";
+import { buildTimes, slotKey, formatSlot, isAllDay, isUuid } from "../../lib/event";
 
 export default function EventPage() {
   const { id } = useParams();
+  const router = useRouter();
 
   const [event, setEvent] = useState(null);
   const [responses, setResponses] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | notfound
   const [live, setLive] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
 
   // The editor's name + selected cells live here in the parent so the results
   // section can load a person's existing answer into the editor ("edit mine").
   const [editName, setEditName] = useState("");
   const [editSlots, setEditSlots] = useState(new Set());
 
+  const param = decodeURIComponent(id);
+
   // Re-fetch just the responses (used after saving and on live updates).
-  async function refreshResponses() {
+  async function refreshResponses(eventId) {
     const { data } = await supabase
       .from("responses")
       .select("name, slots")
-      .eq("event_id", id);
+      .eq("event_id", eventId);
     setResponses(data || []);
   }
 
-  // Load the event itself once, plus the first batch of responses.
+  // Load the event itself once (by slug, falling back to id), plus responses.
   useEffect(() => {
     async function loadEvent() {
-      const { data, error } = await supabase
+      let { data } = await supabase
         .from("events")
         .select("*")
-        .eq("id", id)
-        .single();
-      if (error || !data) {
+        .eq("slug", param)
+        .maybeSingle();
+
+      if (!data && isUuid(param)) {
+        ({ data } = await supabase
+          .from("events")
+          .select("*")
+          .eq("id", param)
+          .maybeSingle());
+      }
+
+      if (!data) {
         setStatus("notfound");
         return;
       }
       setEvent(data);
-      await refreshResponses();
+      setIsOwner(localStorage.getItem(`whenly-owner-${data.id}`) === "1");
+      await refreshResponses(data.id);
       setStatus("ready");
     }
     loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [param]);
 
-  // Live updates, two ways that work together:
-  //  1. Realtime subscription — instant pushes when a response changes (this
-  //     needs realtime enabled for the table; see supabase/enable-realtime.sql).
-  //  2. Polling — re-fetch every few seconds as a reliable fallback so results
-  //     stay fresh even if realtime isn't enabled.
+  // Live updates: realtime subscription (instant) + polling (reliable fallback).
   useEffect(() => {
+    if (!event?.id) return;
     const channel = supabase
-      .channel(`responses-${id}`)
+      .channel(`responses-${event.id}`)
       .on(
         "postgres_changes",
         {
-          event: "*", // INSERT, UPDATE, or DELETE
+          event: "*",
           schema: "public",
           table: "responses",
-          filter: `event_id=eq.${id}`,
+          filter: `event_id=eq.${event.id}`,
         },
-        () => refreshResponses()
+        () => refreshResponses(event.id)
       )
       .subscribe((s) => setLive(s === "SUBSCRIBED"));
 
-    const poll = setInterval(refreshResponses, 6000);
+    const poll = setInterval(() => refreshResponses(event.id), 6000);
 
-    // Cleanup: leave the channel and stop polling when we navigate away.
     return () => {
       supabase.removeChannel(channel);
       clearInterval(poll);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [event?.id]);
 
   if (status === "loading") return <CenterMessage>Loading event…</CenterMessage>;
   if (status === "notfound") {
     return (
       <CenterMessage>
         Hmm, we couldn&apos;t find that event. The link may be wrong or the event
-        was removed. <a href="/">Create a new one →</a>
+        was deleted. <a href="/">Create a new one →</a>
       </CenterMessage>
     );
   }
@@ -108,42 +118,92 @@ export default function EventPage() {
     document.getElementById("editor")?.scrollIntoView({ behavior: "smooth" });
   }
 
+  // --- Organizer actions (only reachable if isOwner) ----------------------
+  async function setFinalSlot(key) {
+    await supabase.from("events").update({ final_slot: key }).eq("id", event.id);
+    setEvent({ ...event, final_slot: key });
+  }
+  async function toggleClosed() {
+    const next = !event.closed;
+    await supabase.from("events").update({ closed: next }).eq("id", event.id);
+    setEvent({ ...event, closed: next });
+  }
+  async function deleteEvent() {
+    if (!window.confirm("Delete this event for everyone? This cannot be undone.")) return;
+    await supabase.from("events").delete().eq("id", event.id);
+    localStorage.removeItem(`whenly-owner-${event.id}`);
+    router.push("/");
+  }
+
   return (
     <main className="page">
       <header className="app-header">
         <h1>🗓️ {event.name}</h1>
-        <p className="tagline">Mark when you&apos;re free, then share the link.</p>
+        {event.description && <p className="tagline">{event.description}</p>}
       </header>
+
+      {event.final_slot && (
+        <section className="card final-banner">
+          <div>
+            <strong>✅ Final time</strong>
+            <p style={{ margin: 0 }}>{formatSlot(event.final_slot, allDay)}</p>
+          </div>
+          {isOwner && (
+            <button className="btn btn-ghost" onClick={() => setFinalSlot(null)}>
+              Unlock
+            </button>
+          )}
+        </section>
+      )}
 
       <ShareBar />
 
-      <AddAvailability
-        eventId={id}
-        dates={dates}
-        times={times}
-        allDay={allDay}
-        name={editName}
-        setName={setEditName}
-        selected={editSlots}
-        setSelected={setEditSlots}
-        existingNames={responses.map((r) => r.name)}
-        onSaved={refreshResponses}
-      />
+      {event.closed ? (
+        <section className="card">
+          <p className="info-banner" style={{ margin: 0 }}>
+            🔒 This event is closed to new responses.
+          </p>
+        </section>
+      ) : (
+        <AddAvailability
+          eventId={event.id}
+          dates={dates}
+          times={times}
+          allDay={allDay}
+          name={editName}
+          setName={setEditName}
+          selected={editSlots}
+          setSelected={setEditSlots}
+          existingNames={responses.map((r) => r.name)}
+          onSaved={() => refreshResponses(event.id)}
+        />
+      )}
 
       <Results
         dates={dates}
         times={times}
         allDay={allDay}
         responses={responses}
+        invitees={event.invitees || []}
+        finalSlot={event.final_slot}
+        isOwner={isOwner}
         live={live}
         onEdit={editPerson}
-        onRefresh={refreshResponses}
+        onLock={setFinalSlot}
+        onRefresh={() => refreshResponses(event.id)}
       />
+
+      {isOwner && (
+        <OrganizerControls
+          closed={event.closed}
+          onToggleClosed={toggleClosed}
+          onDelete={deleteEvent}
+        />
+      )}
     </main>
   );
 }
 
-// Small helper to show a centered message (loading / not found).
 function CenterMessage({ children }) {
   return (
     <main className="page">
@@ -204,14 +264,12 @@ function AddAvailability({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
-  // Prefill the name with the one this person used last time (if any).
   useEffect(() => {
     const remembered = localStorage.getItem("whenly-name");
     if (remembered && !name) setName(remembered);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Is the typed name one that already responded? Then we're editing, not adding.
   const isEditing = existingNames.some(
     (n) => n.toLowerCase() === name.trim().toLowerCase()
   );
@@ -222,8 +280,6 @@ function AddAvailability({
     const cleanName = name.trim() || "Anonymous";
     localStorage.setItem("whenly-name", cleanName);
 
-    // "upsert" = insert a new response, OR update the existing one if this
-    // person (same name) already responded to this event.
     const { error } = await supabase
       .from("responses")
       .upsert(
@@ -238,8 +294,8 @@ function AddAvailability({
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
-    setSelected(new Set()); // clear the grid so the next person starts fresh
-    onSaved(); // reload everyone's responses so the results update
+    setSelected(new Set());
+    onSaved();
   }
 
   return (
@@ -303,10 +359,21 @@ function AddAvailability({
 }
 
 // ===========================================================================
-// Combined results (heatmap + best times)
+// Combined results (responded/missing + best times + heatmap)
 // ===========================================================================
-function Results({ dates, times, allDay, responses, live, onEdit, onRefresh }) {
-  // Tally how many people are free in each slot, and remember their names.
+function Results({
+  dates,
+  times,
+  allDay,
+  responses,
+  invitees,
+  finalSlot,
+  isOwner,
+  live,
+  onEdit,
+  onLock,
+  onRefresh,
+}) {
   const counts = new Map();
   const namesByKey = new Map();
   for (const person of responses) {
@@ -318,6 +385,11 @@ function Results({ dates, times, allDay, responses, live, onEdit, onRefresh }) {
   }
 
   const best = bestSlots(dates, times, counts);
+
+  // Compare responders to the invited list (if one was given) to find who's
+  // missing. Names are matched case-insensitively.
+  const responderNames = new Set(responses.map((r) => r.name.toLowerCase()));
+  const missing = invitees.filter((n) => !responderNames.has(n.toLowerCase()));
 
   return (
     <section className="card">
@@ -340,19 +412,29 @@ function Results({ dates, times, allDay, responses, live, onEdit, onRefresh }) {
         </div>
       </div>
 
-      {responses.length === 0 ? (
-        <p className="muted">No responses yet — be the first, or share the link above.</p>
+      {/* Responded / waiting-on summary */}
+      {invitees.length > 0 ? (
+        <p className="muted">
+          <strong>
+            {invitees.length - missing.length} of {invitees.length}
+          </strong>{" "}
+          invited have responded.
+          {missing.length > 0 && <> Waiting on: {missing.join(", ")}.</>}
+        </p>
       ) : (
         <p className="muted">
-          {responses.length} {responses.length === 1 ? "person" : "people"} responded
-          {" — "}tap a name to edit:
+          {responses.length === 0
+            ? "No responses yet — be the first, or share the link above."
+            : `${responses.length} ${
+                responses.length === 1 ? "person has" : "people have"
+              } responded.`}
         </p>
       )}
 
       {responses.length > 0 && (
         <div className="chips">
           {responses.map((p) => (
-            <button key={p.name} className="chip" onClick={() => onEdit(p)}>
+            <button key={p.name} className="chip" onClick={() => onEdit(p)} title="Edit this response">
               {p.name} ✏️
             </button>
           ))}
@@ -365,8 +447,18 @@ function Results({ dates, times, allDay, responses, live, onEdit, onRefresh }) {
           <ul>
             {best.map((b) => (
               <li key={b.key}>
-                <strong>{formatSlot(b.key, allDay)}</strong> — {b.count} of{" "}
-                {responses.length} free ({(namesByKey.get(b.key) || []).join(", ")})
+                <span>
+                  <strong>{formatSlot(b.key, allDay)}</strong> — {b.count} of{" "}
+                  {responses.length} free ({(namesByKey.get(b.key) || []).join(", ")})
+                </span>
+                {isOwner &&
+                  (finalSlot === b.key ? (
+                    <span className="locked-tag">✅ Locked</span>
+                  ) : (
+                    <button className="btn btn-ghost btn-small" onClick={() => onLock(b.key)}>
+                      📌 Lock in
+                    </button>
+                  ))}
               </li>
             ))}
           </ul>
@@ -383,6 +475,26 @@ function Results({ dates, times, allDay, responses, live, onEdit, onRefresh }) {
         totalPeople={responses.length}
       />
       <p className="legend">Darker green = more people free. Hover a cell to see who.</p>
+    </section>
+  );
+}
+
+// ===========================================================================
+// Organizer-only controls (close/reopen + delete)
+// ===========================================================================
+function OrganizerControls({ closed, onToggleClosed, onDelete }) {
+  return (
+    <section className="card organizer-controls">
+      <h3>Organizer controls</h3>
+      <p className="muted">Only you (the creator) can see this on this device.</p>
+      <div className="actions">
+        <button className="btn btn-ghost" onClick={onToggleClosed}>
+          {closed ? "Reopen event" : "Close to new responses"}
+        </button>
+        <button className="btn btn-danger" onClick={onDelete}>
+          Delete event
+        </button>
+      </div>
     </section>
   );
 }

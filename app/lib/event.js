@@ -43,6 +43,18 @@ export function buildDates(startDate, count) {
   return dates;
 }
 
+// Build a list of day-ids from startDate to endDate, inclusive (both are Date
+// objects). e.g. start Jun 8, end Jun 10 -> ["2026-06-08","2026-06-09","2026-06-10"]
+export function buildDatesRange(startDate, endDate) {
+  const dates = [];
+  let day = new Date(startDate);
+  while (day <= endDate) {
+    dates.push(toDateId(day));
+    day = addDays(day, 1);
+  }
+  return dates;
+}
+
 // Whole-day events use this special slot size. We treat any slot size of a full
 // day (1440 minutes) or more as "whole days" mode — one cell per day, no times.
 export const ALL_DAY = 1440;
@@ -98,4 +110,30 @@ export function formatSlot(key, allDay = false) {
   const [dateId, minutes] = key.split("|");
   if (allDay) return formatDateHeader(dateId);
   return `${formatDateHeader(dateId)}, ${formatTime(Number(minutes))}`;
+}
+
+// --- URL slug helpers --------------------------------------------------------
+
+// Turn a name into a URL-safe slug: "Movie Night!" -> "movie-night"
+export function slugify(text) {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-") // non-letters/numbers become dashes
+    .replace(/^-+|-+$/g, "") // trim leading/trailing dashes
+    .slice(0, 40);
+}
+
+// A friendly, unique-enough event slug: "movie-night-7x2k". The random suffix
+// keeps two events with the same name from clashing.
+export function makeSlug(name) {
+  const base = slugify(name) || "event";
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${base}-${suffix}`;
+}
+
+// Is this string a UUID (our old-style event id)? Used so the event page can
+// look up by friendly slug first, then fall back to an id for older links.
+export function isUuid(text) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text);
 }

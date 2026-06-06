@@ -4,21 +4,31 @@
 // page.js — the HOME page. Its only job is to create an event.
 //
 // When you submit the form, we insert a new row into the "events" table in
-// Supabase. The database hands back a unique id, and we send you to that
-// event's own page (/event/<id>) — the link you'll share with friends.
+// Supabase. We give the event a friendly URL slug (e.g. "movie-night-7x2k"),
+// remember on this device that you're the creator, and send you to the event's
+// own page — the link you'll share with friends.
 // ---------------------------------------------------------------------------
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "./lib/supabase";
-import { toDateId, buildDates, ALL_DAY, isAllDay } from "./lib/event";
+import {
+  toDateId,
+  addDays,
+  buildDatesRange,
+  makeSlug,
+  ALL_DAY,
+  isAllDay,
+} from "./lib/event";
 
 export default function Home() {
   const router = useRouter();
 
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [invitees, setInvitees] = useState("");
   const [startDate, setStartDate] = useState(toDateId(new Date()));
-  const [dayCount, setDayCount] = useState(5);
+  const [endDate, setEndDate] = useState(toDateId(addDays(new Date(), 4)));
   const [slotSize, setSlotSize] = useState(60); // 1440 = whole days
   const [startHour, setStartHour] = useState(9);
   const [endHour, setEndHour] = useState(17);
@@ -30,23 +40,41 @@ export default function Home() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setSaving(true);
     setError("");
 
+    // Work out the list of days from the start/end dates, and sanity-check it.
     const start = new Date(`${startDate}T00:00`);
+    const end = new Date(`${endDate}T00:00`);
+    if (end < start) {
+      setError("The last day must be on or after the first day.");
+      return;
+    }
+    const dates = buildDatesRange(start, end);
+    if (dates.length > 31) {
+      setError("Please choose a range of 31 days or fewer.");
+      return;
+    }
 
-    // Insert the event and ask the database to return the new row (.select())
-    // so we can read its auto-generated id. .single() gives one object.
-    // In whole-day mode the time-of-day range doesn't apply, so we store a
-    // full 0–24 range as a harmless placeholder.
+    // Turn the comma-separated invitees into a clean list of names.
+    const inviteeList = invitees
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    setSaving(true);
+
     const { data, error } = await supabase
       .from("events")
       .insert({
         name: name.trim() || "Untitled event",
-        dates: buildDates(start, Number(dayCount)),
+        description: description.trim() || null,
+        invitees: inviteeList,
+        slug: makeSlug(name),
+        dates,
         start_hour: allDay ? 0 : Number(startHour),
         end_hour: allDay ? 24 : Number(endHour),
         slot_minutes: Number(slotSize),
+        closed: false,
       })
       .select()
       .single();
@@ -57,8 +85,11 @@ export default function Home() {
       return;
     }
 
-    // Go to the new event's shareable page.
-    router.push(`/event/${data.id}`);
+    // Remember on THIS device that we created this event, so the event page can
+    // show us the organizer controls (close / delete / lock final time).
+    localStorage.setItem(`whenly-owner-${data.id}`, "1");
+
+    router.push(`/event/${data.slug}`);
   }
 
   return (
@@ -82,24 +113,46 @@ export default function Home() {
           </label>
 
           <label className="field">
-            <span>First day</span>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+            <span>Description <span className="optional">(optional)</span></span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What's this for? Any details people should know."
+              rows={2}
             />
           </label>
 
           <label className="field">
-            <span>Number of days</span>
-            <select value={dayCount} onChange={(e) => setDayCount(e.target.value)}>
-              {[1, 2, 3, 4, 5, 6, 7, 10, 14].map((n) => (
-                <option key={n} value={n}>
-                  {n} {n === 1 ? "day" : "days"}
-                </option>
-              ))}
-            </select>
+            <span>Who&apos;s invited? <span className="optional">(optional)</span></span>
+            <input
+              type="text"
+              value={invitees}
+              onChange={(e) => setInvitees(e.target.value)}
+              placeholder="Comma-separated, e.g. Alex, Sam, Pat"
+            />
+            <small className="hint">
+              Lets you track who&apos;s responded and who you&apos;re still waiting on.
+            </small>
           </label>
+
+          <div className="field-row">
+            <label className="field">
+              <span>First day</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Last day</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </label>
+          </div>
 
           <label className="field">
             <span>How precise?</span>
