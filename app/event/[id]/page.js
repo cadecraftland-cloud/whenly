@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
-import AvailabilityGrid from "../../components/AvailabilityGrid";
+import DaySchedule from "../../components/DaySchedule";
 import { buildTimes, slotKey, formatSlot, isAllDay, isUuid } from "../../lib/event";
 
 export default function EventPage() {
@@ -303,8 +303,8 @@ function AddAvailability({
       <h2>{isEditing ? "Edit your availability" : "Add your availability"}</h2>
       <p className="muted">
         {allDay
-          ? "Type your name, then click each day that works for you."
-          : "Type your name, then click and drag across the grid to mark when you're free."}
+          ? "Type your name, then tap each day that works for you."
+          : "Type your name, tap a day, then tap the times you're free. Repeat for each day."}
       </p>
 
       <label className="field">
@@ -323,7 +323,7 @@ function AddAvailability({
         </p>
       )}
 
-      <AvailabilityGrid
+      <DaySchedule
         dates={dates}
         times={times}
         allDay={allDay}
@@ -465,7 +465,7 @@ function Results({
         </div>
       )}
 
-      <AvailabilityGrid
+      <DaySchedule
         dates={dates}
         times={times}
         allDay={allDay}
@@ -474,7 +474,7 @@ function Results({
         namesByKey={namesByKey}
         totalPeople={responses.length}
       />
-      <p className="legend">Darker green = more people free. Hover a cell to see who.</p>
+      <p className="legend">Darker green = more people free.</p>
     </section>
   );
 }

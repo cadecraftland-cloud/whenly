@@ -16,6 +16,15 @@ export const metadata = {
   description: "Coordinate which days and times work for your group.",
 };
 
+// Lock the zoom level so the page doesn't zoom in/out on accidental
+// pinches or double-taps while people are tapping the calendar on mobile.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
